@@ -79,7 +79,7 @@ jobs:
           path: sp-1drone/sp1drone.bin
 
   test:
-    name: Effects engine tests (host)
+    name: Drone engine tests (host)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

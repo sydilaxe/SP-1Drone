@@ -1,6 +1,7 @@
 SP-1Drone test build for the Teenage Engineering SP-1: a drone instrument on the sound engine of
-[FRASIL](https://github.com/styvesgoupil/frasil). Out on headphones (or the speaker), 48 kHz / 24-bit, dry: made to
-go through your own effects.
+[FRASIL](https://github.com/styvesgoupil/frasil). Out on the 3.5 mm jack (48 kHz / 24-bit) and at the same time over
+USB-C as a class-compliant sound source (48 kHz / 16-bit) a computer or phone records; the speaker only with neither in
+use. Dry: made to go through your own effects.
 
 **Not yet tried on a real SP-1.** It builds, the engine passes its tests, and the platform code follows firmware that
 runs on the SP-1, but this binary has not been on hardware yet.

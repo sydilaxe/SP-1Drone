@@ -1,7 +1,9 @@
 /* SP-1Drone: FRASIL's drones on the Teenage Engineering SP-1.
  *
- * Audio out: headphones (CS42L42) or, with nothing plugged in, the speaker (TAS2505), 48 kHz / 24-bit. The sound is
- * engine/ (FRASIL's drone voices, made to fit: see engine/drone.h), dry, made to go through effects of your own.
+ * Audio out: the 3.5 mm jack (CS42L42), 48 kHz / 24-bit; and at once USB-C, a class-compliant sound source the host
+ * records (UAC2, 48 kHz stereo 16-bit), whenever the host opens it. The speaker (TAS2505) plays only with nothing in
+ * the jack and no USB host connected (a charger keeps it on). The sound is engine/ (FRASIL's drone voices, made to
+ * fit: see engine/drone.h), dry, made to go through effects of your own.
  *
  * Controls
  *   TRACK 1-4            drone voice 1-4 on (it swells in) or off (it fades over RELEASE)
@@ -12,7 +14,7 @@
  *                          page 2 TONE   TIMBRE, MOTION, TIDE, WARMTH
  *                          page 3 SHAPE  SPARKLE, DETUNE, EVOLVE, RELEASE
  *   FWD (>>) / RWD (<<)  next / previous page
- *   VOL + / VOL -        output volume, 3 dB steps
+ *   VOL + / VOL -        output volume (the jack and the speaker; USB carries the drone at its own level), 3 dB steps
  *   FUNCTION held, and:  FWD / RWD the next / previous of FRASIL's 36 drone presets;
  *                        VOL + / VOL - the root a semitone up / down (D2 .. D4);
  *                        TRACK 1-4 the chord: FIFTHS, MINOR, MAJOR, SUS
@@ -38,6 +40,8 @@
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/i2s.h>
 #include <zephyr/usb/usbd.h>
+#include <zephyr/usb/class/usbd_uac2.h>
+#include <zephyr/sys/ring_buffer.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/fatal.h>
 #include <sample_usbd.h>
@@ -400,11 +404,116 @@ static void hp_codec_init(void)
 	g_hp_on = 1;
 }
 
-/* ---------------------------------------------------------------- USB ----
- * USB-C carries the serial port alone (the status line): no audio class, the drone makes its own sound. */
+/* -------------------------------------------------------------- USB audio ----
+ * USB-C: the drone to the host as a class-compliant sound source (UAC2, app.overlay's uac2_drone: 48 kHz stereo,
+ * 16-bit), beside the status line's serial port. Nothing to set: it streams whenever the host opens it (records),
+ * and stops when the host closes it.
+ *
+ * The SP-1's audio clock (the codec's 48 kHz) and the host's USB frames (1 ms) are not the same clock, so the stream
+ * is asynchronous: the audio thread puts each block into a ring (usb_feed), and each USB frame takes 48 frames from
+ * it, 47 or 49 when the ring's level drifts from its setpoint; the host follows the packets. A host that falls
+ * behind or a ring that runs dry gives a whole packet of silence and starts again from the setpoint, never a
+ * stutter. The stream carries the drone before VOL: VOL sets the headphones and the speaker, the host its own level. */
+#define USB_FRAME_BYTES 4u                       /* 16-bit stereo */
+#define USB_PKT_FRAMES  48u
+#define USB_PKT_MAX     ((USB_PKT_FRAMES + 1u) * USB_FRAME_BYTES)
+#define USB_RING_FRAMES 2048u
+#define USB_SETPOINT    640                      /* frames held: 13 ms against both clocks' jitter */
+#define USB_EMA_SHIFT   5
+RING_BUF_DECLARE(usb_ring, USB_RING_FRAMES * USB_FRAME_BYTES);
+K_MEM_SLAB_DEFINE_STATIC(usb_tx_slab, ROUND_UP(USB_PKT_MAX, UDC_BUF_GRANULARITY), 6, UDC_BUF_ALIGN);
+
+#define UAC2_OUT_TERMINAL_ID UAC2_ENTITY_ID(DT_NODELABEL(usb_out))
+static const struct device *const uac2_dev = DEVICE_DT_GET(DT_NODELABEL(uac2_drone));
+
+static volatile bool g_usb_host;     /* a host has configured the SP-1 (not a charger): the speaker goes quiet */
+static volatile bool g_usb_stream;   /* the host has the audio open */
+static bool g_usb_primed;            /* the ring has filled to its setpoint since the stream (re)started */
+static int32_t g_usb_fill_avg;       /* the ring's level, frames << 8, smoothed */
+static volatile uint32_t g_usb_under, g_usb_over, g_usb_nobuf, g_usb_short, g_usb_long;
+
+/* the audio thread: a block of the drone into the ring, as 16-bit (rounded, clipped) */
+static void usb_feed(const float *l, const float *r, uint32_t n)
+{
+	int16_t pk[2 * 64];
+	if (!g_usb_stream) return;
+	if (ring_buf_space_get(&usb_ring) < n * USB_FRAME_BYTES) { g_usb_over++; return; }   /* the host fell behind */
+	for (uint32_t o = 0; o < n; o += 64u) {
+		for (uint32_t i = 0; i < 64u; i++) {
+			float a = l[o + i] * 32767.0f, b = r[o + i] * 32767.0f;
+			a = a > 32767.0f ? 32767.0f : a < -32768.0f ? -32768.0f : a;
+			b = b > 32767.0f ? 32767.0f : b < -32768.0f ? -32768.0f : b;
+			pk[2 * i] = (int16_t)(a + (a >= 0.0f ? 0.5f : -0.5f));
+			pk[2 * i + 1] = (int16_t)(b + (b >= 0.0f ? 0.5f : -0.5f));
+		}
+		(void)ring_buf_put(&usb_ring, (const uint8_t *)pk, sizeof(pk));
+	}
+}
+
+static void uac2_terminal_update_cb(const struct device *dev, uint8_t terminal, bool enabled, bool microframes,
+				    void *user_data)
+{
+	ARG_UNUSED(dev); ARG_UNUSED(microframes); ARG_UNUSED(user_data);
+	if (terminal != UAC2_OUT_TERMINAL_ID) return;
+	g_usb_stream = false;
+	k_sched_lock();                  /* (the audio thread is the ring's writer: not now) */
+	ring_buf_reset(&usb_ring);
+	k_sched_unlock();
+	g_usb_primed = false;
+	g_usb_fill_avg = USB_SETPOINT << 8;
+	g_usb_stream = enabled;
+}
+
+/* each USB frame (1 ms): a packet to the host, its size from the ring's level */
+static void uac2_sof_cb(const struct device *dev, void *user_data)
+{
+	ARG_UNUSED(user_data);
+	if (!g_usb_stream) return;
+	int fill = (int)(ring_buf_size_get(&usb_ring) / USB_FRAME_BYTES);
+	uint32_t n = USB_PKT_FRAMES;
+	if (!g_usb_primed && fill >= USB_SETPOINT) {
+		g_usb_primed = true;
+		g_usb_fill_avg = fill << 8;
+	}
+	if (g_usb_primed) {
+		g_usb_fill_avg += ((fill << 8) - g_usb_fill_avg) >> USB_EMA_SHIFT;
+		int err = (g_usb_fill_avg >> 8) - USB_SETPOINT;
+		if (err > (int)USB_PKT_FRAMES) { n++; g_usb_long++; }
+		else if (err < -(int)USB_PKT_FRAMES) { n--; g_usb_short++; }
+		if (fill < (int)n) { g_usb_under++; g_usb_primed = false; }   /* run dry: silence, then from the setpoint */
+	}
+	void *buf;
+	if (k_mem_slab_alloc(&usb_tx_slab, &buf, K_NO_WAIT) != 0) { g_usb_nobuf++; return; }
+	if (g_usb_primed) (void)ring_buf_get(&usb_ring, buf, n * USB_FRAME_BYTES);
+	else memset(buf, 0, n * USB_FRAME_BYTES);
+	if (usbd_uac2_send(dev, UAC2_OUT_TERMINAL_ID, buf, (uint16_t)(n * USB_FRAME_BYTES)) < 0)
+		k_mem_slab_free(&usb_tx_slab, buf);
+}
+
+static void uac2_buf_release_cb(const struct device *dev, uint8_t terminal, void *buf, void *user_data)
+{
+	ARG_UNUSED(dev); ARG_UNUSED(user_data);
+	if (terminal == UAC2_OUT_TERMINAL_ID) k_mem_slab_free(&usb_tx_slab, buf);
+}
+
+static struct uac2_ops sp1_uac2_ops = {
+	.sof_cb = uac2_sof_cb,
+	.terminal_update_cb = uac2_terminal_update_cb,
+	.buf_release_cb = uac2_buf_release_cb,
+};
+
+/* a host connected or gone (a charger never configures the SP-1: the speaker stays on) */
+static void usb_msg_cb(struct usbd_context *const ctx, const struct usbd_msg *const msg)
+{
+	ARG_UNUSED(ctx);
+	if (msg->type == USBD_MSG_CONFIGURATION) g_usb_host = msg->status != 0;   /* (0: de-configured) */
+	else if (msg->type == USBD_MSG_VBUS_REMOVED || msg->type == USBD_MSG_RESET) g_usb_host = false;
+}
+
 static void usb_start(void)
 {
-	struct usbd_context *usbd = sample_usbd_init_device(NULL);
+	if (device_is_ready(uac2_dev)) usbd_uac2_set_ops(uac2_dev, &sp1_uac2_ops, NULL);
+	struct usbd_context *usbd = sample_usbd_init_device(usb_msg_cb);
 	if (usbd == NULL) return;
 	(void)usbd_device_set_bcd_device(usbd, 0x0200);
 	(void)usbd_enable(usbd);
@@ -452,6 +561,7 @@ static float db2lin(int db)
 static void audio_block(int32_t *out)
 {
 	drone_render(bufl, bufr, BLK_FRAMES);
+	usb_feed(bufl, bufr, BLK_FRAMES);   /* the host's copy, before VOL */
 	/* the volume after the engine, ramped across the block */
 	float target = g_muted ? 0.0f : db2lin(g_vol_db);
 	float step = (target - g_vol_lin) * (1.0f / BLK_FRAMES);
@@ -618,12 +728,14 @@ static void status_line(int page)
 {
 	if (!cdc_open()) return;
 	printk("SP-1Drone f=%d,%d,%d,%d page=%d preset=%d:%s root=%d chord=%d voices=%d%d%d%d vol=%d "
-	       "blk=%u/%uus over=%u shed=%d/%u i2s=%d/%u hp=%d/%d tas=%d bat=%d rr=%08x flt=%08x@%08x\n",
+	       "blk=%u/%uus over=%u shed=%d/%u i2s=%d/%u hp=%d/%d tas=%d usb=%d/%d fill=%u under=%u uover=%u "
+	       "nobuf=%u adj=%u/%u bat=%d rr=%08x flt=%08x@%08x\n",
 	       g_adc[2], g_adc[3], g_adc[4], g_adc[5], page + 1, sdb_preset_now() + 1,
 	       sdb_preset_name(sdb_preset_now()), sdb_root_now(), sdb_chord_now() + 1, sdb_voice_on(0),
 	       sdb_voice_on(1), sdb_voice_on(2), sdb_voice_on(3), g_vol_db, g_blk_us_last, g_blk_us_max,
 	       g_blk_over, drone_shed_level(), g_shed_up, g_i2s_rc, g_i2s_fail, g_hp_on, g_hp_in, g_tas_ok,
-	       g_adc[CH_BATT], g_resetreas, g_last_fault, g_last_fault_pc);
+	       g_usb_host, g_usb_stream, ring_buf_size_get(&usb_ring) / USB_FRAME_BYTES, g_usb_under, g_usb_over,
+	       g_usb_nobuf, g_usb_short, g_usb_long, g_adc[CH_BATT], g_resetreas, g_last_fault, g_last_fault_pc);
 	g_blk_us_max = 0;
 }
 
@@ -738,6 +850,7 @@ int main(void)
 	int64_t vol_show = 0, page_show = 0, preset_show = 0, root_show = 0, chord_show = 0, values_show = 0;
 	int last_vol = VOL_NONE, hp_votes = 0, play_n = 0, trk_cand = -1, trk_n = 0, odd_n = 0;
 	bool play_armed = false, chord = false, fn_used = false, first = true;
+	int spk_on = 1;   /* (tas2505_configure leaves the speaker on) */
 	uint32_t tick = 0;
 	float glow = 0.0f;
 
@@ -847,7 +960,7 @@ int main(void)
 			pwr_t = -1;
 		}
 
-		/* headphones in: speaker off */
+		/* the speaker: off with headphones (a cable) in the jack, or with a USB host connected; the jack plays on */
 		if (g_hp_on && now >= hp_next) {
 			hp_next = now + 250;
 			int c = hp_detect();
@@ -855,10 +968,15 @@ int main(void)
 				hp_votes += c ? 1 : -1;
 				hp_votes = hp_votes > 3 ? 3 : hp_votes < -3 ? -3 : hp_votes;
 				int in = hp_votes >= 2 ? 1 : hp_votes <= -2 ? 0 : g_hp_in;
-				if (in != g_hp_in && in >= 0) {
-					g_hp_in = in;
-					if (g_tas_ok) tas_set_speaker(!in);
-				}
+				if (in >= 0) g_hp_in = in;
+			}
+		}
+		if (!usb_present()) g_usb_host = false;   /* (unplugged: whatever USB said last) */
+		{
+			int spk = g_hp_in != 1 && !g_usb_host;
+			if (g_tas_ok && spk != spk_on) {
+				tas_set_speaker(spk);
+				spk_on = spk;
 			}
 		}
 

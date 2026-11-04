@@ -3,7 +3,7 @@
 Firmware that turns the Teenage Engineering SP-1 into a drone instrument, on the sound engine of
 [FRASIL](https://github.com/styvesgoupil/frasil) (Styves Goupil's drone firmware for the M-VAVE
 FM-1). Each TRACK button lights a slow, living drone voice; the faders shape them; the result comes
-out of the headphone jack dry, made to go through your own effects.
+out of the headphone jack and USB-C at once, dry, made to go through your own effects or be recorded.
 
 **Firmware:** `sp1drone.bin`, on each [release](../../releases), or from the latest build's
 artifacts (`make firmware` to build it).
@@ -28,6 +28,9 @@ artifacts (`make firmware` to build it).
   notes the voices hold.
 - **FRASIL's 36 drone presets** (MIST, CATHEDRAL, GLACIER ... PRISM).
 - **Dry.** FRASIL's reverb is left out: plug the headphone jack into your effects.
+- **USB-C audio.** On a computer, phone or tablet the SP-1 is a class-compliant sound source,
+  "SP-1Drone" (48 kHz stereo, 16-bit), streaming whenever an app records from it, with the jack
+  playing at the same time. The speaker plays only with nothing in the jack and no USB host connected.
 
 ## Controls
 
@@ -37,7 +40,7 @@ artifacts (`make firmware` to build it).
 | PLAY | every voice off (remembered), or back on |
 | Faders 1-4 | the page's four settings (pick-up after a page or preset change) |
 | FWD (>>) / RWD (<<) | next / previous page |
-| VOL + / VOL - | output volume, 3 dB steps |
+| VOL + / VOL - | output volume of the jack and speaker, 3 dB steps (USB carries its own level) |
 | FUNCTION + FWD / RWD | next / previous preset |
 | FUNCTION + VOL + / - | root up / down a semitone |
 | FUNCTION + TRACK 1-4 | chord: FIFTHS, MINOR, MAJOR, SUS |
@@ -54,8 +57,8 @@ artifacts (`make firmware` to build it).
 Lights: the track lights follow each voice's level; for 1.5 s after a page or preset change they
 show the page's settings, blinking until their faders pick them up. The status lights glow with
 the output, the glints flashing over it, and for a moment after a change show the page, the
-volume, the preset, the root or the chord. Plug a cable into the headphone jack and the speaker
-turns off. Nothing is stored: it starts on MIST, FIFTHS on D, page 1, volume -6 dB.
+volume, the preset, the root or the chord. A cable in the jack or a computer on USB-C turns the
+speaker off. Nothing is stored: it starts on MIST, FIFTHS on D, page 1, volume -6 dB.
 
 ## Flashing and getting back
 
@@ -76,7 +79,8 @@ reaches the bootloader.
 Open the SP-1's USB serial port (any baud rate) for a line a second: the faders, the page, preset,
 root, chord and voices, the volume, `blk=` the time one 5.3 ms audio block takes (the CPU check:
 it must stay under 5333 us), `over=` blocks that ran late, `shed=` partials faded out to make time,
-headphones, and `flt=` a crash from the last boot. If something is wrong on the hardware, this line
+headphones, `usb=` a host connected and recording, the USB audio buffer and its underruns, and
+`flt=` a crash from the last boot. If something is wrong on the hardware, this line
 is the thing to send.
 
 ## How FRASIL fits the SP-1
@@ -97,7 +101,7 @@ makes it fit:
 
 ## CPU and memory
 
-- RAM: about 40 KB of 256 KB. Flash: 115 KB.
+- RAM: about 50 KB of 256 KB. Flash: 119 KB.
 - CPU, worst case (all four voices, every fader up, the heaviest preset): about 71% of the 64 MHz
   Cortex-M4, estimated by `tools/bench_m4.py`, which runs the engine built for the M4 in an
   emulator and counts cycles from the M4's instruction timings, preset by preset. The estimate
@@ -119,7 +123,7 @@ make bench       # the Cortex-M4 cycle estimate (pip install unicorn capstone)
 |---|---|
 | `engine/` | the sound (MPL-2.0, from FRASIL): `drone.c` the voices, GLINT, the bass, the mix; `sp1drone.c` the brain (pages, presets, chords) |
 | `test/` | host checks (silence, levels, every preset, glides without clicks, shedding, block-size independence) and renders |
-| `firmware/` | the Zephyr application: I2S, codecs, faders, buttons, lights, power, USB serial |
+| `firmware/` | the Zephyr application: I2S, codecs, USB audio and serial, faders, buttons, lights, power |
 | `boards/` | the SP-1 board definition |
 | `tools/` | the CPU estimate |
 | `docs/manual/` | the user manual (Markdown); CI builds the PDF and attaches it to every release |
