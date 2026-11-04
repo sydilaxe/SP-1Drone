@@ -24,3 +24,47 @@
 &zephyr_user {
 	io-channels = <&adc 0>, <&adc 1>, <&adc 2>, <&adc 3>, <&adc 4>, <&adc 5>, <&adc 6>;
 };
+
+/* USB audio, the other way from SP-1FX's: the SP-1 is a USB sound source (a synthesizer) and the host records it.
+ * The board's host-to-SP-1 "speaker" goes; in its place one stream to the host, 48 kHz stereo, 16-bit (what every
+ * host opens: computers, phones, Linux handhelds), asynchronous: the SP-1's own clock sets the rate, a packet of 47,
+ * 48 or 49 frames each millisecond (no implicit-feedback: the host follows the packets). */
+#include <zephyr/dt-bindings/usb/audio.h>
+/delete-node/ &uac2_speaker;
+/ {
+	uac2_drone: usb_audio2 {
+		compatible = "zephyr,uac2";
+		status = "okay";
+		full-speed;
+		audio-function = <AUDIO_FUNCTION_MUSICAL_INSTRUMENT>;
+
+		uac_aclk: aclk {
+			compatible = "zephyr,uac2-clock-source";
+			clock-type = "internal-fixed";
+			frequency-control = "read-only";
+			sampling-frequencies = <48000>;
+		};
+
+		synth_in: synth {
+			compatible = "zephyr,uac2-input-terminal";
+			clock-source = <&uac_aclk>;
+			terminal-type = <EMBEDDED_TERMINAL_SYNTHESIZER>;
+			front-left;
+			front-right;
+		};
+
+		usb_out: usb_out {
+			compatible = "zephyr,uac2-output-terminal";
+			data-source = <&synth_in>;
+			clock-source = <&uac_aclk>;
+			terminal-type = <USB_TERMINAL_STREAMING>;
+		};
+
+		as_iso_in: in_interface {
+			compatible = "zephyr,uac2-audio-streaming";
+			linked-terminal = <&usb_out>;
+			subslot-size = <2>;
+			bit-resolution = <16>;
+		};
+	};
+};

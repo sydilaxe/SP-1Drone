@@ -12,8 +12,8 @@ pdf-name: SP-1Drone-manual
 
 SP-1Drone is replacement firmware for the Teenage Engineering SP-1. It turns the SP-1 into a drone
 instrument: each TRACK button lights a slow, living drone voice, the faders shape them, and the
-result comes out of the headphone jack (or the speaker), dry, ready for your pedals, a mixer's
-effects or another SP-1.
+result comes out of the headphone jack and USB-C at the same time, dry, ready for your pedals, a
+mixer's effects, another SP-1, or a computer or phone to record it.
 
 The sound is the engine of [FRASIL](https://github.com/styvesgoupil/frasil), Styves Goupil's
 drone firmware for the M-VAVE FM-1, made to fit the SP-1: its three-layer drone voices, their
@@ -28,7 +28,8 @@ is left out on purpose: SP-1Drone is meant to run through external effects.
 ## What you need
 
 - A Teenage Engineering SP-1.
-- Headphones, or a 3.5 mm cable to your effects or mixer.
+- Headphones, or a 3.5 mm cable to your effects or mixer; or a USB-C cable to a computer, phone
+  or tablet to record it.
 - For installing: a USB-C cable and a computer with Chrome or Edge.
 
 ## Quick start
@@ -96,7 +97,7 @@ you set it). The faders then pick up from there: see [Pages and pick-up](#pages-
 | **PLAY** | every voice off, remembered; press again and they come back (at first: all four) |
 | **Faders 1-4** | the four settings of the page |
 | **>> / <<** | next / previous page |
-| **VOL + / VOL -** | output volume, 3 dB steps |
+| **VOL + / VOL -** | output volume (jack and speaker), 3 dB steps |
 | **FUNCTION + >> / <<** | next / previous preset |
 | **FUNCTION + VOL + / -** | root up / down a semitone |
 | **FUNCTION + TRACK 1-4** | chord: FIFTHS, MINOR, MAJOR, SUS |
@@ -136,13 +137,22 @@ and the ones still waiting for their fader blink.
 
 ## Volume
 
-**VOL +** and **VOL -** change the output volume in 3 dB steps, from 0 dB down to -60 dB.
-SP-1Drone starts at -6 dB. For a second after a change the status lights show the volume.
+**VOL +** and **VOL -** change the output volume of the jack and the speaker in 3 dB steps, from
+0 dB down to -60 dB. SP-1Drone starts at -6 dB. For a second after a change the status lights show
+the volume. USB audio is not affected: it carries the drone at its own level (peaks around -4 dBFS
+at most), and the computer or phone sets its recording level.
 
-## Headphones and speaker
+## Outputs: jack, USB-C and speaker
 
-The headphone jack is the output for your effects. Plug in a cable and the speaker turns off;
-unplug it and the speaker comes back.
+The drone plays on every output at once; nothing to choose:
+
+- **3.5 mm jack:** always. This is the output for your effects or headphones.
+- **USB-C:** connected to a computer, phone or tablet, the SP-1 shows up as a sound source (an
+  audio input) called **SP-1Drone**: 48 kHz, stereo, 16-bit, class compliant, so no driver is
+  needed. It streams whenever an app records from it, and stops when the app closes it. The jack
+  keeps playing meanwhile.
+- **Speaker:** only when nothing is in the jack and no computer or phone is connected over USB-C.
+  A USB charger does not turn it off.
 
 # Lights
 
@@ -193,6 +203,8 @@ bootloader.
 | Problem | Try |
 |---|---|
 | No sound | Press PLAY or a TRACK button; check the volume (VOL +); check CHOIR, PARTIALS and BREATH aren't all down on page 1. |
+| No sound from the speaker | It is off while something is in the jack or a computer or phone is connected over USB-C. |
+| The computer doesn't list SP-1Drone as an input | Use a USB-C cable that carries data, not a charge-only one. Power the SP-1 on with FUNCTION. |
 | A fader doesn't respond | It is waiting to pick up after a page or preset change: move it to where its value is, or sweep it past. |
 | The SP-1 powered off while I used FUNCTION | It powers off only on a FUNCTION hold used alone; press the other button while still holding FUNCTION. |
 | A voice sounds thinner for a while | The SP-1 ran short of time and faded out a partial or two (see `shed=` below); they come back on their own. |
@@ -213,6 +225,8 @@ terminal (any baud rate). It prints one line a second:
 | `over=` | blocks that took too long (each a possible click) |
 | `shed=level/count` | partials faded out to save time (0: none), and how often that happened |
 | `hp=` | headphones detected |
+| `usb=host/stream` | a USB host connected, and recording |
+| `fill= under= uover=` | the USB audio buffer (frames), and how often it ran dry or overflowed |
 | `flt=` | a crash from the previous boot, if any |
 
 If something is wrong on the hardware, this line is the thing to send with your report.
@@ -221,14 +235,14 @@ If something is wrong on the hardware, this line is the thing to send with your 
 
 | | |
 |---|---|
-| Audio out | headphones or speaker, 48 kHz / 24-bit, stereo |
+| Audio out | 3.5 mm jack, 48 kHz / 24-bit, stereo; at once USB-C, class-compliant USB audio input (UAC2), 48 kHz / 16-bit, stereo; the speaker when neither is in use |
 | Synthesis | 32-bit floating point at 24 kHz, upsampled to 48 kHz |
 | Voices | 4 drone voices × 3 layers (CHOIR, PARTIALS, BREATH), a bass, 3 glints |
 | Presets | FRASIL's 36 drone presets |
 | Effects | none: dry, for your own; a soft limit protects against overs |
 | Volume | 0 to -60 dB in 3 dB steps |
 | CPU | about 71% of the 64 MHz Cortex-M4 at most (estimated; when a block runs late, partials are faded out until it fits) |
-| RAM | about 40 KB of 256 KB |
+| RAM | about 50 KB of 256 KB |
 
 # Credits
 
