@@ -29,7 +29,8 @@ artifacts (`make firmware` to build it).
 - **FRASIL's 36 drone presets** (MIST, CATHEDRAL, GLACIER ... PRISM).
 - **Dry.** FRASIL's reverb is left out: plug the headphone jack into your effects.
 - **USB-C audio.** On a computer, phone or tablet the SP-1 is a class-compliant sound source,
-  "SP-1Drone" (48 kHz stereo, 16-bit), streaming whenever an app records from it, with the jack
+  "SP-1Drone" (48 kHz stereo, 16- or 24-bit: the host picks, so Linux handhelds such as the TrimUI Brick
+  work too), streaming whenever an app records from it, with the jack
   playing at the same time. The speaker plays only with nothing in the jack and no USB host connected.
 
 ## Controls
@@ -79,7 +80,7 @@ reaches the bootloader.
 Open the SP-1's USB serial port (any baud rate) for a line a second: the faders, the page, preset,
 root, chord and voices, the volume, `blk=` the time one 5.3 ms audio block takes (the CPU check:
 it must stay under 5333 us), `over=` blocks that ran late, `shed=` partials faded out to make time,
-headphones, `usb=` a host connected and recording, the USB audio buffer and its underruns, and
+headphones, `usb=` a host connected and recording (16 or 24: the bit depth it chose), the USB audio buffer and its underruns, and
 `flt=` a crash from the last boot. If something is wrong on the hardware, this line
 is the thing to send.
 
@@ -124,6 +125,7 @@ make bench       # the Cortex-M4 cycle estimate (pip install unicorn capstone)
 | `engine/` | the sound (MPL-2.0, from FRASIL): `drone.c` the voices, GLINT, the bass, the mix; `sp1drone.c` the brain (pages, presets, chords) |
 | `test/` | host checks (silence, levels, every preset, glides without clicks, shedding, block-size independence) and renders |
 | `firmware/` | the Zephyr application: I2S, codecs, USB audio and serial, faders, buttons, lights, power |
+| `firmware/zephyr-uac2-backport/` | the USB audio class as the SP-1 runs it (16- and 24-bit streams), as SP-1FX's |
 | `boards/` | the SP-1 board definition |
 | `tools/` | the CPU estimate |
 | `docs/manual/` | the user manual (Markdown); CI builds the PDF and attaches it to every release |
