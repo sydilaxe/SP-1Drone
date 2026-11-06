@@ -1,7 +1,7 @@
 /* SP-1Drone: FRASIL's drones on the Teenage Engineering SP-1.
  *
  * Audio out: the 3.5 mm jack (CS42L42), 48 kHz / 24-bit; and at once USB-C, a class-compliant sound source the host
- * records (UAC2, 48 kHz stereo 16-bit), whenever the host opens it. The speaker (TAS2505) plays only with nothing in
+ * records (UAC2, 48 kHz stereo, 16- or 24-bit: the host picks), whenever the host opens it. The speaker (TAS2505) plays only with nothing in
  * the jack and no USB host connected (a charger keeps it on). The sound is engine/ (FRASIL's drone voices, made to
  * fit: see engine/drone.h), dry, made to go through effects of your own.
  *
@@ -406,17 +406,19 @@ static void hp_codec_init(void)
 
 /* -------------------------------------------------------------- USB audio ----
  * USB-C: the drone to the host as a class-compliant sound source (UAC2, app.overlay's uac2_drone: 48 kHz stereo,
- * 16-bit), beside the status line's serial port. Nothing to set: it streams whenever the host opens it (records),
- * and stops when the host closes it.
+ * 16-bit on alternate setting 1, 24-bit on alternate setting 2, the host picks: Linux handhelds such as the TrimUI
+ * Brick often take 16-bit, computers 24-bit), beside the status line's serial port. Nothing to set: it streams
+ * whenever the host opens it (records), and stops when the host closes it. The ring holds 24-bit frames either way;
+ * a 16-bit packet is rounded down from them as it goes out.
  *
  * The SP-1's audio clock (the codec's 48 kHz) and the host's USB frames (1 ms) are not the same clock, so the stream
  * is asynchronous: the audio thread puts each block into a ring (usb_feed), and each USB frame takes 48 frames from
  * it, 47 or 49 when the ring's level drifts from its setpoint; the host follows the packets. A host that falls
  * behind or a ring that runs dry gives a whole packet of silence and starts again from the setpoint, never a
  * stutter. The stream carries the drone before VOL: VOL sets the headphones and the speaker, the host its own level. */
-#define USB_FRAME_BYTES 4u                       /* 16-bit stereo */
+#define USB_FRAME_BYTES 6u                       /* the ring: 24-bit stereo */
 #define USB_PKT_FRAMES  48u
-#define USB_PKT_MAX     ((USB_PKT_FRAMES + 1u) * USB_FRAME_BYTES)
+#define USB_PKT_MAX     ((USB_PKT_FRAMES + 1u) * USB_FRAME_BYTES)   /* the 24-bit packet, the larger one */
 #define USB_RING_FRAMES 2048u
 #define USB_SETPOINT    640                      /* frames held: 13 ms against both clocks' jitter */
 #define USB_EMA_SHIFT   5
@@ -431,22 +433,42 @@ static volatile bool g_usb_stream;   /* the host has the audio open */
 static bool g_usb_primed;            /* the ring has filled to its setpoint since the stream (re)started */
 static int32_t g_usb_fill_avg;       /* the ring's level, frames << 8, smoothed */
 static volatile uint32_t g_usb_under, g_usb_over, g_usb_nobuf, g_usb_short, g_usb_long;
+extern volatile uint8_t uac2_sp1_alt;   /* usbd_uac2.c: 1 = 16-bit, 2 = 24-bit */
 
-/* the audio thread: a block of the drone into the ring, as 16-bit (rounded, clipped) */
+/* a sample as 24-bit little-endian (rounded, clipped) */
+static inline void put24(uint8_t *p, float x)
+{
+	x *= 8388607.0f;
+	x = x > 8388607.0f ? 8388607.0f : x < -8388608.0f ? -8388608.0f : x;
+	int32_t v = (int32_t)(x + (x >= 0.0f ? 0.5f : -0.5f));
+	p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16);
+}
+
+/* the audio thread: a block of the drone into the ring, as 24-bit */
 static void usb_feed(const float *l, const float *r, uint32_t n)
 {
-	int16_t pk[2 * 64];
+	uint8_t pk[64 * USB_FRAME_BYTES];
 	if (!g_usb_stream) return;
 	if (ring_buf_space_get(&usb_ring) < n * USB_FRAME_BYTES) { g_usb_over++; return; }   /* the host fell behind */
 	for (uint32_t o = 0; o < n; o += 64u) {
 		for (uint32_t i = 0; i < 64u; i++) {
-			float a = l[o + i] * 32767.0f, b = r[o + i] * 32767.0f;
-			a = a > 32767.0f ? 32767.0f : a < -32768.0f ? -32768.0f : a;
-			b = b > 32767.0f ? 32767.0f : b < -32768.0f ? -32768.0f : b;
-			pk[2 * i] = (int16_t)(a + (a >= 0.0f ? 0.5f : -0.5f));
-			pk[2 * i + 1] = (int16_t)(b + (b >= 0.0f ? 0.5f : -0.5f));
+			put24(&pk[i * USB_FRAME_BYTES], l[o + i]);
+			put24(&pk[i * USB_FRAME_BYTES + 3], r[o + i]);
 		}
-		(void)ring_buf_put(&usb_ring, (const uint8_t *)pk, sizeof(pk));
+		(void)ring_buf_put(&usb_ring, pk, sizeof(pk));
+	}
+}
+
+/* 24-bit samples to 16-bit, in place (rounded to nearest, clipped): k samples */
+static void narrow16(uint8_t *buf, uint32_t k)
+{
+	for (uint32_t i = 0; i < k; i++) {
+		const uint8_t *p = &buf[3 * i];
+		int32_t v = (int32_t)(((uint32_t)p[0] << 8) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 24)) >> 8;
+		v = (v + 128) >> 8;
+		if (v > 32767) v = 32767;
+		buf[2 * i] = (uint8_t)v;
+		buf[2 * i + 1] = (uint8_t)(v >> 8);
 	}
 }
 
@@ -484,9 +506,14 @@ static void uac2_sof_cb(const struct device *dev, void *user_data)
 	}
 	void *buf;
 	if (k_mem_slab_alloc(&usb_tx_slab, &buf, K_NO_WAIT) != 0) { g_usb_nobuf++; return; }
-	if (g_usb_primed) (void)ring_buf_get(&usb_ring, buf, n * USB_FRAME_BYTES);
-	else memset(buf, 0, n * USB_FRAME_BYTES);
-	if (usbd_uac2_send(dev, UAC2_OUT_TERMINAL_ID, buf, (uint16_t)(n * USB_FRAME_BYTES)) < 0)
+	uint32_t bytes = n * USB_FRAME_BYTES;
+	if (g_usb_primed) (void)ring_buf_get(&usb_ring, buf, bytes);
+	else memset(buf, 0, bytes);
+	if (uac2_sp1_alt != 2) {   /* 16-bit (alternate 1) */
+		narrow16(buf, 2u * n);
+		bytes = n * 4u;
+	}
+	if (usbd_uac2_send(dev, UAC2_OUT_TERMINAL_ID, buf, (uint16_t)bytes) < 0)
 		k_mem_slab_free(&usb_tx_slab, buf);
 }
 
@@ -734,7 +761,7 @@ static void status_line(int page)
 	       sdb_preset_name(sdb_preset_now()), sdb_root_now(), sdb_chord_now() + 1, sdb_voice_on(0),
 	       sdb_voice_on(1), sdb_voice_on(2), sdb_voice_on(3), g_vol_db, g_blk_us_last, g_blk_us_max,
 	       g_blk_over, drone_shed_level(), g_shed_up, g_i2s_rc, g_i2s_fail, g_hp_on, g_hp_in, g_tas_ok,
-	       g_usb_host, g_usb_stream, ring_buf_size_get(&usb_ring) / USB_FRAME_BYTES, g_usb_under, g_usb_over,
+	       g_usb_host, g_usb_stream ? (uac2_sp1_alt == 2 ? 24 : 16) : 0, ring_buf_size_get(&usb_ring) / USB_FRAME_BYTES, g_usb_under, g_usb_over,
 	       g_usb_nobuf, g_usb_short, g_usb_long, g_adc[CH_BATT], g_resetreas, g_last_fault, g_last_fault_pc);
 	g_blk_us_max = 0;
 }
