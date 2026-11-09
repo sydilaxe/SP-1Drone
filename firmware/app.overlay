@@ -26,9 +26,10 @@
 };
 
 /* USB audio, the other way from SP-1FX's: the SP-1 is a USB sound source (a synthesizer) and the host records it.
- * The board's host-to-SP-1 "speaker" goes; in its place one stream to the host, 48 kHz stereo, 16-bit (what every
- * host opens: computers, phones, Linux handhelds), asynchronous: the SP-1's own clock sets the rate, a packet of 47,
- * 48 or 49 frames each millisecond (no implicit-feedback: the host follows the packets). */
+ * The board's host-to-SP-1 "speaker" goes; in its place one stream to the host, 48 kHz stereo, 16-bit here
+ * (alternate setting 1: what every host opens, computers, phones, Linux handhelds) and 24-bit (alternate setting 2,
+ * added by the UAC2 class, CONFIG_USBD_UAC2_SP1_ALT24); the host picks. Asynchronous: the SP-1's own clock sets
+ * the rate, a packet of 47, 48 or 49 frames each millisecond (no implicit-feedback: the host follows the packets). */
 #include <zephyr/dt-bindings/usb/audio.h>
 /delete-node/ &uac2_speaker;
 / {

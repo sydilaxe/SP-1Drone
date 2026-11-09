@@ -148,8 +148,9 @@ The drone plays on every output at once; nothing to choose:
 
 - **3.5 mm jack:** always. This is the output for your effects or headphones.
 - **USB-C:** connected to a computer, phone or tablet, the SP-1 shows up as a sound source (an
-  audio input) called **SP-1Drone**: 48 kHz, stereo, 16-bit, class compliant, so no driver is
-  needed. It streams whenever an app records from it, and stops when the app closes it. The jack
+  audio input) called **SP-1Drone**: 48 kHz, stereo, 16-bit or 24-bit (the computer or app picks:
+  Linux handhelds such as the TrimUI Brick often take 16-bit, computers usually 24-bit), class
+  compliant, so no driver is needed. It streams whenever an app records from it, and stops when the app closes it. The jack
   keeps playing meanwhile.
 - **Speaker:** only when nothing is in the jack and no computer or phone is connected over USB-C.
   A USB charger does not turn it off.
@@ -225,7 +226,7 @@ terminal (any baud rate). It prints one line a second:
 | `over=` | blocks that took too long (each a possible click) |
 | `shed=level/count` | partials faded out to save time (0: none), and how often that happened |
 | `hp=` | headphones detected |
-| `usb=host/stream` | a USB host connected, and recording |
+| `usb=host/stream` | a USB host connected, and recording: 0 not recording, 16 or 24 the bit depth the host chose |
 | `fill= under= uover=` | the USB audio buffer (frames), and how often it ran dry or overflowed |
 | `flt=` | a crash from the previous boot, if any |
 
@@ -235,7 +236,7 @@ If something is wrong on the hardware, this line is the thing to send with your 
 
 | | |
 |---|---|
-| Audio out | 3.5 mm jack, 48 kHz / 24-bit, stereo; at once USB-C, class-compliant USB audio input (UAC2), 48 kHz / 16-bit, stereo; the speaker when neither is in use |
+| Audio out | 3.5 mm jack, 48 kHz / 24-bit, stereo; at once USB-C, class-compliant USB audio input (UAC2), 48 kHz / 16- or 24-bit (the host picks), stereo; the speaker when neither is in use |
 | Synthesis | 32-bit floating point at 24 kHz, upsampled to 48 kHz |
 | Voices | 4 drone voices × 3 layers (CHOIR, PARTIALS, BREATH), a bass, 3 glints |
 | Presets | FRASIL's 36 drone presets |
