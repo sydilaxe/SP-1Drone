@@ -21,4 +21,8 @@ firmware:
 bench:
 	python3 tools/bench_m4.py -v
 
-.PHONY: test firmware bench
+# the firmware's version: the latest release's, in VERSION (bump it with each release)
+version:
+	@cat VERSION
+
+.PHONY: version test firmware bench
