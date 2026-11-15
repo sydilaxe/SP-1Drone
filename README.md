@@ -8,6 +8,8 @@ out of the headphone jack and USB-C at once, dry, made to go through your own ef
 **Firmware:** `sp1drone.bin`, on each [release](../../releases), or from the latest build's
 artifacts (`make firmware` to build it).
 
+**Latest release:** [v0.1.0](../../releases/tag/V0.1.0) · [all releases](../../releases)
+
 **Manual:** `SP-1Drone-manual.pdf` on each [release](../../releases) (source:
 [`docs/manual/manual.md`](docs/manual/manual.md))
 
@@ -144,3 +146,14 @@ make bench       # the Cortex-M4 cycle estimate (pip install unicorn capstone)
   bootloader documentation.
 
 SP-1Drone is not made or endorsed by Teenage Engineering, M-VAVE, or the author of FRASIL.
+
+## Releasing
+
+Push a tag such as `v0.4.0`, run **Actions → build → Run workflow** with `release_tag` filled in, or
+create a release on GitHub's Releases page. Any of these builds the firmware and the manual, runs the
+tests, and publishes a full release marked **Latest** with `sp1drone.bin` and `SP-1Drone-manual.pdf` attached and
+`.github/release-notes.md` as its notes. A tag typed as `V0.4.0` or `0.4.0` is published as `v0.4.0`;
+running again for the same tag replaces the files.
+
+Before tagging, set the new version in `VERSION` and in the README's **Latest release** line (CI checks the
+two match), and put what is new at the top of `.github/release-notes.md`.
